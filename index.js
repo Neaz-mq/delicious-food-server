@@ -246,26 +246,81 @@ app.post('/payments', async (req, res) => {
 
   const deleteResult = await cartCollection.deleteMany(query);
 
-  // send user email about payment confirmation
-  mg.messages
-    .create(process.env.MAIL_SENDING_DOMAIN, {
-      from: "Mailgun Sandbox <postmaster@sandboxbdfffae822db40f6b0ccc96ae1cb28f3.mailgun.org>",
-      to: ["jhankarmahbub7@gmail.com"],
-      subject: "Bistro Boss Order Confirmation",
-      text: "Testing some Mailgun awesomness!",
-      html: `
-        <div>
-          <h2>Thank you for your order</h2>
-          <h4>Your Transaction Id: <strong>${payment.transactionId}</strong></h4>
-          <p>We would like to get your feedback about the food</p>
-        </div>
-      `
-    })
-    .then(msg => console.log(msg)) // logs response data
-    .catch(err => console.log(err)); // logs any error`;
-
+ 
   res.send({ paymentResult, deleteResult });
+});
+
+ // stats or analytics
+ app.get('/admin-stats',  async (req, res) => {
+  const users = await userCollection.estimatedDocumentCount();
+  const menuItems = await menuCollection.estimatedDocumentCount();
+  const orders = await paymentCollection.estimatedDocumentCount();
+
+  // this is not the best way
+  // const payments = await paymentCollection.find().toArray();
+  // const revenue = payments.reduce((total, payment) => total + payment.price, 0);
+
+  const result = await paymentCollection.aggregate([
+    {
+      $group: {
+        _id: null,
+        totalRevenue: {
+          $sum: '$price'
+        }
+      }
+    }
+  ]).toArray();
+
+  const revenue = result.length > 0 ? result[0].totalRevenue : 0;
+
+  res.send({
+    users,
+    menuItems,
+    orders,
+    revenue
+  })
 })
+
+ // using aggregate pipeline
+ 
+ app.get('/order-stats', verifyToken, verifyAdmin, async (req, res) => {
+  const result = await paymentCollection.aggregate([
+    {
+      $unwind: '$menuItemIds'
+    },
+    {
+      $lookup: {
+        from: 'menu',
+        localField: 'menuItemIds',
+        foreignField: '_id',
+        as: 'menuItems'
+      }
+    },
+    {
+      $unwind: '$menuItems'
+    },
+    {
+      $group: {
+        _id: '$menuItems.category',
+        quantity: { $sum: 1 },
+        revenue: { $sum: '$menuItems.price' }
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        category: '$_id',
+        quantity: '$quantity',
+        revenue: '$revenue'
+      }
+    }
+  ]).toArray();
+
+  res.send(result);
+
+})
+
+
 
 
     // Send a ping to confirm a successful connection
